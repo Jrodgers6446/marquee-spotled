@@ -1,4 +1,4 @@
-const CACHE_NAME = 'marquee-spotled-v2';
+const CACHE_NAME = 'marquee-spotled-v3';
 const ASSETS = [
   './',
   './index.html',
