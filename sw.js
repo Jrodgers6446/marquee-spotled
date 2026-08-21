@@ -1,4 +1,4 @@
-const CACHE_NAME = 'marquee-spotled-v1';
+const CACHE_NAME = 'marquee-spotled-v2';
 const ASSETS = [
   './',
   './index.html',
@@ -25,13 +25,14 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return;
+  // Network-first: always try to get the latest app code, and only fall back
+  // to the cache if the network is unavailable (e.g. offline). This avoids
+  // ever serving stale JS after a fix has shipped.
   event.respondWith(
-    caches.match(event.request).then((cached) =>
-      cached || fetch(event.request).then((response) => {
-        const copy = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
-        return response;
-      }).catch(() => cached)
-    )
+    fetch(event.request).then((response) => {
+      const copy = response.clone();
+      caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+      return response;
+    }).catch(() => caches.match(event.request))
   );
 });
