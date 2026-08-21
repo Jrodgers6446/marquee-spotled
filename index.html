@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0d0f">
+<title>Marquee &mdash; SpotLED Control</title>
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="icon" href="./icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="./icon-192.png">
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="2" y="8" width="3" height="3"/><rect x="7" y="8" width="3" height="3"/>
+      <rect x="12" y="8" width="3" height="3"/><rect x="17" y="8" width="3" height="3"/>
+      <rect x="4.5" y="13" width="3" height="3"/><rect x="9.5" y="13" width="3" height="3"/>
+      <rect x="14.5" y="13" width="3" height="3"/>
+    </svg>
+    <div>
+      <h1>Marquee</h1>
+      <p class="tagline">SpotLED badge control, from the browser</p>
+    </div>
+  </div>
+  <button id="connectBtn" class="btn btn-primary">Connect display</button>
+</header>
+
+<p id="status" class="status" role="status" aria-live="polite"></p>
+
+<main class="layout">
+
+  <aside class="panel device-panel">
+    <h2 class="panel-title">Display</h2>
+    <dl class="info-grid">
+      <div><dt>Size</dt><dd id="devDims">&mdash;</dd></div>
+      <div><dt>Color</dt><dd id="devColor">&mdash;</dd></div>
+      <div><dt>Frame limit</dt><dd id="devFrameLimit">&mdash;</dd></div>
+      <div><dt>Buffer</dt><dd id="devBuffer">&mdash;</dd></div>
+      <div class="span2"><dt>Firmware</dt><dd id="devVersion">&mdash;</dd></div>
+    </dl>
+
+    <div class="field">
+      <label for="brightness">Brightness <span id="brightnessVal">100</span></label>
+      <input type="range" id="brightness" min="0" max="100" value="100" class="needs-connection" disabled>
+    </div>
+
+    <div class="field">
+      <label>Orientation</label>
+      <div class="mode-row">
+        <button class="mode-btn needs-connection active" data-mode="NORMAL" disabled>Normal</button>
+        <button class="mode-btn needs-connection" data-mode="UPSIDE_DOWN" disabled>180&deg;</button>
+        <button class="mode-btn needs-connection" data-mode="MIRROR" disabled>Mirror</button>
+        <button class="mode-btn needs-connection" data-mode="MIRROR_UPSIDE_DOWN" disabled>Mirror+180&deg;</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="accentColor">Color (RGB displays)</label>
+      <input type="color" id="accentColor" value="#ffb000">
+    </div>
+  </aside>
+
+  <section class="panel workspace">
+    <nav class="tabs">
+      <button class="tab-btn active" data-tab="draw">Draw</button>
+      <button class="tab-btn" data-tab="text">Text</button>
+      <button class="tab-btn" data-tab="animate">Animate</button>
+      <button class="tab-btn" data-tab="bars">Bars</button>
+    </nav>
+
+    <div id="panel-draw" class="tab-panel active">
+      <div class="canvas-wrap">
+        <canvas id="drawCanvas" class="led-canvas"></canvas>
+      </div>
+      <div class="controls-row">
+        <button id="drawClear" class="btn">Clear</button>
+        <button id="drawInvert" class="btn">Invert</button>
+        <button id="drawSend" class="btn btn-accent needs-connection" disabled>Send frame</button>
+      </div>
+      <p class="hint">Click or drag on the grid to light pixels. Sends a single static frame.</p>
+    </div>
+
+    <div id="panel-text" class="tab-panel">
+      <textarea id="textInput" rows="3" placeholder="Type a message&hellip;">Hello world!</textarea>
+      <div class="controls-grid">
+        <div class="field">
+          <label for="textEffect">Effect</label>
+          <select id="textEffect">
+            <option value="SCROLL_LEFT" selected>Scroll left</option>
+            <option value="SCROLL_RIGHT">Scroll right</option>
+            <option value="SCROLL_UP">Scroll up</option>
+            <option value="SCROLL_DOWN">Scroll down</option>
+            <option value="STACK">Stack</option>
+            <option value="EXPAND">Expand</option>
+            <option value="LASER">Laser</option>
+            <option value="NONE">Static (no effect)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="textSpeed">Speed <span id="textSpeedVal">20</span></label>
+          <input type="range" id="textSpeed" min="0" max="100" value="20">
+        </div>
+        <div class="field">
+          <label for="textFrameMs">Frame time (ms) <span id="textFrameMsVal">2000</span></label>
+          <input type="range" id="textFrameMs" min="200" max="5000" step="100" value="2000">
+        </div>
+      </div>
+      <div class="controls-row">
+        <button id="textPreview" class="btn">Preview</button>
+        <button id="textSend" class="btn btn-accent needs-connection" disabled>Send text</button>
+      </div>
+      <div class="canvas-wrap small">
+        <canvas id="textPreviewCanvas" class="led-canvas"></canvas>
+      </div>
+      <p class="hint">Long messages are chopped into device-width frames automatically. Newlines stack lines within the display height.</p>
+    </div>
+
+    <div id="panel-animate" class="tab-panel">
+      <div class="canvas-wrap">
+        <canvas id="animCanvas" class="led-canvas"></canvas>
+      </div>
+      <div id="animFilmstrip" class="filmstrip"></div>
+      <div class="controls-row">
+        <button id="animAdd" class="btn">+ Frame</button>
+        <button id="animDuplicate" class="btn">Duplicate</button>
+        <button id="animDelete" class="btn">Delete</button>
+        <button id="animClear" class="btn">Clear</button>
+        <button id="animPlay" class="btn">Play preview</button>
+      </div>
+      <div class="controls-grid">
+        <div class="field">
+          <label for="animEffect">Effect</label>
+          <select id="animEffect">
+            <option value="NONE" selected>Flipbook (timed)</option>
+            <option value="SCROLL_LEFT">Scroll left</option>
+            <option value="SCROLL_RIGHT">Scroll right</option>
+            <option value="SCROLL_UP">Scroll up</option>
+            <option value="SCROLL_DOWN">Scroll down</option>
+            <option value="STACK">Stack</option>
+            <option value="EXPAND">Expand</option>
+            <option value="LASER">Laser</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="animFrameMs">Frame time (ms) <span id="animFrameMsVal">200</span></label>
+          <input type="range" id="animFrameMs" min="40" max="2000" step="10" value="200">
+        </div>
+      </div>
+      <div class="controls-row">
+        <button id="animSend" class="btn btn-accent needs-connection" disabled>Send animation</button>
+      </div>
+      <p class="hint">Up to the device&rsquo;s frame limit. Click a filmstrip thumbnail to jump to that frame.</p>
+    </div>
+
+    <div id="panel-bars" class="tab-panel">
+      <div class="canvas-wrap">
+        <canvas id="barsCanvas" class="led-canvas"></canvas>
+      </div>
+      <div id="barsSliders" class="bars-row"></div>
+      <div class="controls-row">
+        <button id="barsRandom" class="btn">Randomize</button>
+        <button id="barsSend" class="btn btn-accent needs-connection" disabled>Send levels</button>
+      </div>
+      <p class="hint">16-band level meter, intended for a music spectrum display.</p>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  Unofficial &middot; protocol ported from
+  <a href="https://github.com/iwalton3/python-spotled" target="_blank" rel="noopener">iwalton3/python-spotled</a>.
+  Not affiliated with the device manufacturer.
+</footer>
+
+<script type="module" src="./app.js"></script>
+</body>
+</html>
