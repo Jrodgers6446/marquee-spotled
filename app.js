@@ -262,8 +262,18 @@ async function handleConnectClick() {
     setStatus(`Connected \u2014 ${conn.width}\u00d7${conn.height} display.`);
     rebuildEditorsForDevice();
   } catch (err) {
-    console.error(err);
-    setStatus(err.message || 'Could not connect to the display.', 'error');
+    console.error('SpotLED connect failed:', err);
+    let msg = err.message || 'Could not connect to the display.';
+    if (err.name === 'NotFoundError') {
+      msg = 'No device was selected, or none matched. Make sure the display is powered on and in range.';
+    } else if (err.name === 'NetworkError') {
+      msg = 'Bluetooth connection dropped (GATT server unreachable). Try moving closer or power-cycling the display.';
+    } else if (err.name === 'SecurityError') {
+      msg = 'Blocked by browser security policy \u2014 this page must be served over HTTPS.';
+    } else if (/service/i.test(msg) || /GATT Service.*not found/i.test(msg)) {
+      msg = `Connected, but the expected SpotLED service (${err.message}) wasn\u2019t found on this device \u2014 it may use a different protocol/board revision.`;
+    }
+    setStatus(msg, 'error');
   }
 }
 
