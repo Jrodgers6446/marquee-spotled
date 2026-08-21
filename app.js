@@ -245,7 +245,7 @@ function setConnectedUI(isConnected) {
   $$('.needs-connection').forEach((el) => { el.disabled = !isConnected; });
 }
 
-async function handleConnectClick() {
+async function handleConnectClick(acceptAll = false) {
   if (conn.isConnected) {
     conn.disconnect();
     return;
@@ -254,9 +254,12 @@ async function handleConnectClick() {
     setStatus('Web Bluetooth isn\u2019t available in this browser. Try Chrome or Edge on desktop/Android.', 'error');
     return;
   }
+  $('#connectFallback').hidden = true;
   try {
-    setStatus('Choose your SpotLED display in the browser prompt\u2026');
-    await conn.connect();
+    setStatus(acceptAll
+      ? 'Showing all nearby Bluetooth devices\u2026'
+      : 'Choose your SpotLED display in the browser prompt\u2026');
+    await conn.connect(acceptAll);
     updateDeviceInfoPanel();
     setConnectedUI(true);
     setStatus(`Connected \u2014 ${conn.width}\u00d7${conn.height} display.`);
@@ -265,7 +268,10 @@ async function handleConnectClick() {
     console.error('SpotLED connect failed:', err);
     let msg = err.message || 'Could not connect to the display.';
     if (err.name === 'NotFoundError') {
-      msg = 'No device was selected, or none matched. Make sure the display is powered on and in range.';
+      msg = acceptAll
+        ? 'No device was selected. Make sure the display is powered on and in range.'
+        : 'No device matched "SpotLED\u2026" \u2014 it may use a different name.';
+      if (!acceptAll) $('#connectFallback').hidden = false;
     } else if (err.name === 'NetworkError') {
       msg = 'Bluetooth connection dropped (GATT server unreachable). Try moving closer or power-cycling the display.';
     } else if (err.name === 'SecurityError') {
@@ -528,7 +534,8 @@ function rebuildEditorsForDevice() {
   setupBarsTab();
 }
 
-$('#connectBtn').addEventListener('click', handleConnectClick);
+$('#connectBtn').addEventListener('click', () => handleConnectClick(false));
+$('#connectFallback').addEventListener('click', () => handleConnectClick(true));
 $('#accentColor').addEventListener('input', () => {
   renderDraw(); renderAnimEditor(); renderBarsPreview();
 });
