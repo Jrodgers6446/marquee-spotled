@@ -346,6 +346,7 @@ export class LedConnection {
     await this.cmdChar.startNotifications();
     this.cmdChar.addEventListener('characteristicvaluechanged', (ev) => {
       const value = new Uint8Array(ev.target.value.buffer);
+      console.debug('[spotled] notification received', Array.from(value));
       if (this.pending) {
         const { resolve } = this.pending;
         this.pending = null;
@@ -379,11 +380,21 @@ export class LedConnection {
   _nextCommandSerialNo() { this.commandSerialNo = (this.commandSerialNo + 1) & 0xffff; return this.commandSerialNo; }
 
   async _write(characteristic, bytes) {
-    // writeValueWithoutResponse/WithResponse are newer (Chrome 116+) explicit
-    // variants; older Chrome/Android WebView only has the legacy writeValue().
-    if (characteristic.writeValueWithoutResponse) {
+    // Check the characteristic's actual advertised GATT properties, not just
+    // whether the browser API method exists (it always does) — some cheap
+    // BLE boards only support "write with response", and calling
+    // writeValueWithoutResponse on those throws / silently no-ops on certain
+    // Android BLE stacks instead of raising a clear error.
+    const props = characteristic.properties || {};
+    const label = characteristic.uuid === CMD_CHAR_UUID ? 'cmd' : 'data';
+    if (props.writeWithoutResponse && characteristic.writeValueWithoutResponse) {
+      console.debug(`[spotled] write(${label}, withoutResponse)`, Array.from(bytes));
       await characteristic.writeValueWithoutResponse(bytes);
+    } else if (characteristic.writeValueWithResponse) {
+      console.debug(`[spotled] write(${label}, withResponse)`, Array.from(bytes));
+      await characteristic.writeValueWithResponse(bytes);
     } else {
+      console.debug(`[spotled] write(${label}, legacy writeValue)`, Array.from(bytes));
       await characteristic.writeValue(bytes);
     }
   }
@@ -414,6 +425,7 @@ export class LedConnection {
     dataCommand.serialNo = this._nextDataSerialNo();
     const serialNo = this._nextCommandSerialNo();
     const payload = dataCommand.serialize();
+    console.debug(`[spotled] sendData: type=${dataCommand.commandType} serial=${serialNo} len=${payload.length}`);
 
     let responsePromise = this.waitForResponse();
     await this.sendCommand(new SendingDataStartCommand(serialNo, dataCommand.commandType, payload.length));
@@ -452,6 +464,7 @@ export class LedConnection {
     const finishPromise = this.waitForResponse();
     await this.sendCommand(new SendingDataFinishCommand(serialNo, dataCommand.commandType, payload.length));
     await finishPromise;
+    console.debug(`[spotled] sendData complete: serial=${serialNo}`);
   }
 
   async setBrightness(brightness) {
