@@ -317,16 +317,25 @@ export class LedConnection {
     this.onDisconnect = null;
   }
 
-  async connect() {
-    // Most cheap BLE devices (including SpotLED units) don't advertise their
-    // GATT service UUID in the advertisement packet itself — they only expose
-    // it once you're connected. A `filters` match on services would silently
-    // return an empty chooser, so we accept all nearby devices here and rely
-    // on optionalServices to unlock access to the SpotLED service post-connect.
-    this.device = await navigator.bluetooth.requestDevice({
-      acceptAllDevices: true,
-      optionalServices: [SERVICE_UUID],
-    });
+  async connect(acceptAll = false) {
+    // SpotLED badges advertise their BLE name as "SpotLED_xxxx" (per the
+    // manufacturer's own setup instructions), so by default we filter the
+    // picker to just matching devices instead of showing every nearby BLE
+    // device. optionalServices is still required regardless — filters only
+    // match on what's in the advertisement packet (the name), while GATT
+    // service access to the actual SpotLED service (0000ff20...) is granted
+    // separately post-connect.
+    const options = acceptAll
+      ? { acceptAllDevices: true, optionalServices: [SERVICE_UUID] }
+      : {
+          filters: [
+            { namePrefix: 'SpotLED' },
+            { namePrefix: 'SPOTLED' },
+            { namePrefix: 'spotled' },
+          ],
+          optionalServices: [SERVICE_UUID],
+        };
+    this.device = await navigator.bluetooth.requestDevice(options);
     this.device.addEventListener('gattserverdisconnected', () => {
       if (this.onDisconnect) this.onDisconnect();
     });
