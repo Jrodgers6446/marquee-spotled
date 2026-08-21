@@ -318,8 +318,13 @@ export class LedConnection {
   }
 
   async connect() {
+    // Most cheap BLE devices (including SpotLED units) don't advertise their
+    // GATT service UUID in the advertisement packet itself — they only expose
+    // it once you're connected. A `filters` match on services would silently
+    // return an empty chooser, so we accept all nearby devices here and rely
+    // on optionalServices to unlock access to the SpotLED service post-connect.
     this.device = await navigator.bluetooth.requestDevice({
-      filters: [{ services: [SERVICE_UUID] }],
+      acceptAllDevices: true,
       optionalServices: [SERVICE_UUID],
     });
     this.device.addEventListener('gattserverdisconnected', () => {
@@ -365,10 +370,12 @@ export class LedConnection {
   _nextCommandSerialNo() { this.commandSerialNo = (this.commandSerialNo + 1) & 0xffff; return this.commandSerialNo; }
 
   async _write(characteristic, bytes) {
+    // writeValueWithoutResponse/WithResponse are newer (Chrome 116+) explicit
+    // variants; older Chrome/Android WebView only has the legacy writeValue().
     if (characteristic.writeValueWithoutResponse) {
       await characteristic.writeValueWithoutResponse(bytes);
     } else {
-      await characteristic.writeValueWithResponse(bytes);
+      await characteristic.writeValue(bytes);
     }
   }
 
