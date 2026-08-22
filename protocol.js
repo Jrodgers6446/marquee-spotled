@@ -357,7 +357,8 @@ export class LedConnection {
       // on every platform. Must respect byteOffset/byteLength explicitly or
       // parsing reads garbage/misaligned data.
       const value = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
-      console.debug('[spotled] notification received', Array.from(value));
+      console.debug('[spotled] notification bytes:', JSON.stringify(Array.from(value)),
+        '| length_field=', value[0], 'commandType=', value[1]);
       if (this.pending) {
         const { resolve } = this.pending;
         this.pending = null;
@@ -366,8 +367,10 @@ export class LedConnection {
     });
 
     const bufInfo = await this.queryCommand(new GetBufferSizeCommand());
+    console.debug('[spotled] GetBufferSizeCommand parsed as:', bufInfo.constructor.name, JSON.stringify(bufInfo));
     this.bufferSize = bufInfo.bufferSize;
     const dispInfo = await this.queryCommand(new GetDisplayInfoCommand());
+    console.debug('[spotled] GetDisplayInfoCommand parsed as:', dispInfo.constructor.name, JSON.stringify(dispInfo));
     this.width = dispInfo.width;
     this.height = dispInfo.height;
     this.frameLimit = dispInfo.frameLimit;
@@ -375,7 +378,10 @@ export class LedConnection {
     this.colorDepth = dispInfo.colorDepth;
 
     let version = null;
-    try { version = await this.queryCommand(new GetVersionCommand()); } catch (e) { /* optional */ }
+    try {
+      version = await this.queryCommand(new GetVersionCommand());
+      console.debug('[spotled] GetVersionCommand parsed as:', version.constructor.name, JSON.stringify(version));
+    } catch (e) { console.debug('[spotled] GetVersionCommand failed:', e); }
     this.version = version;
   }
 
