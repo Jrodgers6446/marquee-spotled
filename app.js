@@ -301,6 +301,21 @@ $('#brightness').addEventListener('input', (ev) => {
   }, 120);
 });
 
+$('#brightnessTest').addEventListener('click', async () => {
+  setStatus('Setting brightness to 30, then asking the device what it thinks its brightness is\u2026');
+  try {
+    const before = conn.brightness;
+    const reported = await conn.setBrightnessAndVerify(30);
+    if (reported === 30) {
+      setStatus(`Device confirms brightness=30 internally (was ${before}). The write command IS accepted \u2014 if the screen didn't visibly change, the issue is elsewhere (e.g. frame/text rendering), not this command.`);
+    } else {
+      setStatus(`Sent 30, but device reports brightness=${reported} \u2014 the write is NOT taking effect internally. This command's opcode is likely wrong for this firmware.`, 'error');
+    }
+  } catch (err) {
+    setStatus(`Test failed: ${err.message}`, 'error');
+  }
+});
+
 $$('.mode-btn').forEach((btn) => {
   btn.addEventListener('click', async () => {
     $$('.mode-btn').forEach((b) => b.classList.remove('active'));
