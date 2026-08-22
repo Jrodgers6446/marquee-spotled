@@ -212,7 +212,13 @@ export function genColorBitmap(rows, colorMap) {
 class GenericCommandResponse {
   constructor(data) {
     const d = new ByteReader(data);
-    d.readBytes(3);
+    // NOTE: the original python-spotled library (using Linux BlueZ/gattlib)
+    // skips 3 "junk" bytes here before the length field. Real-world testing
+    // against actual hardware over Web Bluetooth shows those 3 bytes don't
+    // exist in the notification payload at all — the browser's Bluetooth API
+    // already hands us just the characteristic's raw value with no extra
+    // prefix. Confirmed by comparing actual notification byte-lengths against
+    // each response type's expected content size (all off by exactly 3).
     const length = d.readByte();
     this.commandType = d.readByte();
     this.content = d.readBytes(length - 2);
