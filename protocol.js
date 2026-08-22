@@ -504,6 +504,16 @@ export class LedConnection {
     this.brightness = brightness;
   }
 
+  // Diagnostic helper: set a brightness value, then immediately re-query the
+  // device's own reported brightness to see whether the write was actually
+  // accepted internally by the firmware (independent of whether anything is
+  // currently lit up on-screen to visibly dim).
+  async setBrightnessAndVerify(brightness) {
+    await this.setBrightness(brightness);
+    const info = await this.queryCommand(new GetDisplayInfoCommand());
+    return info.brightness;
+  }
+
   async setScreenMode(mode) {
     await this.sendData(new SendDataCommand(new ScreenModeData(mode).serialize()));
   }
