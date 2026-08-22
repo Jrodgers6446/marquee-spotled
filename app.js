@@ -71,9 +71,10 @@ function hexToRgb(hex) {
 // arbitrary width x deviceHeight, returning {grid, colorGrid} where colorGrid
 // holds [r,g,b] per lit pixel (only meaningful for RGB devices).
 function rasterizeText(text, deviceHeight, colorRgb) {
+  const safeHeight = (Number.isFinite(deviceHeight) && deviceHeight > 0) ? deviceHeight : 12;
   const lines = text.replace(/\r/g, '').split('\n').filter((l) => l.length > 0);
   const n = Math.max(1, lines.length);
-  const lineHeight = Math.max(5, Math.floor(deviceHeight / n));
+  const lineHeight = Math.max(5, Math.floor(safeHeight / n));
   const fontPx = Math.max(4, lineHeight - 1);
 
   const measureCanvas = document.createElement('canvas');
@@ -99,16 +100,16 @@ function rasterizeText(text, deviceHeight, colorRgb) {
   // if fewer pixel rows than deviceHeight (single short line), letterbox-center vertically
   const finalCanvas = document.createElement('canvas');
   finalCanvas.width = maxWidth;
-  finalCanvas.height = deviceHeight;
+  finalCanvas.height = safeHeight;
   const fctx = finalCanvas.getContext('2d');
   fctx.fillStyle = '#000';
   fctx.fillRect(0, 0, finalCanvas.width, finalCanvas.height);
-  const yOffset = Math.max(0, Math.floor((deviceHeight - canvas.height) / 2));
+  const yOffset = Math.max(0, Math.floor((safeHeight - canvas.height) / 2));
   fctx.drawImage(canvas, 0, yOffset);
 
-  const imgData = fctx.getImageData(0, 0, maxWidth, deviceHeight).data;
+  const imgData = fctx.getImageData(0, 0, maxWidth, safeHeight).data;
   const grid = [];
-  for (let y = 0; y < deviceHeight; y++) {
+  for (let y = 0; y < safeHeight; y++) {
     const row = [];
     for (let x = 0; x < maxWidth; x++) {
       const idx = (y * maxWidth + x) * 4;
@@ -360,9 +361,15 @@ $('#textSend').addEventListener('click', async () => {
   const effect = Effect[$('#textEffect').value];
   const speed = Number($('#textSpeed').value);
   const frameMs = Number($('#textFrameMs').value);
+  const deviceHeight = conn.height || 12;
+  const deviceWidth = conn.width || 48;
+  if (!conn.height || !conn.width) {
+    setStatus('Device dimensions haven\u2019t loaded yet \u2014 try reconnecting.', 'error');
+    return;
+  }
   try {
-    const grid = rasterizeText(text, conn.height, currentColor());
-    const frames = chopIntoFrames(grid, conn.width).map((g) =>
+    const grid = rasterizeText(text, deviceHeight, currentColor());
+    const frames = chopIntoFrames(grid, deviceWidth).map((g) =>
       frameFromGrid(g, conn.colorDepth, currentColor()));
     if (frames.length > conn.frameLimit) {
       setStatus(`Text is too long \u2014 needs ${frames.length} frames but the device allows ${conn.frameLimit}. Shorten it.`, 'error');
@@ -379,8 +386,8 @@ $('#textFrameMs').addEventListener('input', (ev) => { $('#textFrameMsVal').textC
 $('#textPreview').addEventListener('click', () => {
   const text = $('#textInput').value || 'HELLO';
   const h = conn.height || 12;
-  const grid = rasterizeText(text, h, currentColor());
   const w = conn.width || 48;
+  const grid = rasterizeText(text, h, currentColor());
   const preview = grid.map((row) => row.slice(0, w));
   drawLedGrid($('#textPreviewCanvas'), preview.length ? preview : makeGrid(w, h),
     { color: $('#accentColor').value });
