@@ -304,6 +304,8 @@ export function parseCommandResponse(data) {
    LedConnection — manages the GATT session + flow control
    ============================================================ */
 
+const KNOWN_RESPONSE_TYPES = new Set([2, 17, 19, 21, 254, 255]);
+
 export class LedConnection {
   constructor() {
     this.device = null;
@@ -357,8 +359,21 @@ export class LedConnection {
       // on every platform. Must respect byteOffset/byteLength explicitly or
       // parsing reads garbage/misaligned data.
       const value = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
+      const commandType = value[1];
       console.debug('[spotled] notification bytes:', JSON.stringify(Array.from(value)),
-        '| length_field=', value[0], 'commandType=', value[1]);
+        '| length_field=', value[0], 'commandType=', commandType);
+      // Two sanity checks before treating this as "the response to whatever
+      // we're waiting on": the type must be one we recognize, AND the
+      // declared length byte must equal the actual packet size (confirmed
+      // against real hardware: a genuine response's length byte always
+      // equals its total byte count). Either check failing means this is
+      // very likely an unsolicited/heartbeat push from the device rather
+      // than a real reply, and consuming the pending wait with it would
+      // corrupt the whole flow-control state machine.
+      if (!KNOWN_RESPONSE_TYPES.has(commandType) || value[0] !== value.length) {
+        console.debug('[spotled] ignoring unrecognized/unsolicited notification (type', commandType, ')');
+        return;
+      }
       if (this.pending) {
         const { resolve } = this.pending;
         this.pending = null;
