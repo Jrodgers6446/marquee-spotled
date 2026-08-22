@@ -345,7 +345,12 @@ export class LedConnection {
     this.dataChar = await service.getCharacteristic(DATA_CHAR_UUID);
     await this.cmdChar.startNotifications();
     this.cmdChar.addEventListener('characteristicvaluechanged', (ev) => {
-      const value = new Uint8Array(ev.target.value.buffer);
+      const dv = ev.target.value; // a DataView
+      // IMPORTANT: DataView.buffer is the *entire* underlying ArrayBuffer,
+      // which is not necessarily tightly sized to this notification's bytes
+      // on every platform. Must respect byteOffset/byteLength explicitly or
+      // parsing reads garbage/misaligned data.
+      const value = new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength);
       console.debug('[spotled] notification received', Array.from(value));
       if (this.pending) {
         const { resolve } = this.pending;
