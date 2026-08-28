@@ -498,33 +498,40 @@ export class LedConnection {
     // of this fix did exactly that) means the device may never actually
     // receive the data correctly even though the overall exchange appears
     // to "complete" with a final ack.
+    //
+    // CORRECTION, confirmed by real device logs: the docstring's general
+    // description ("Pause means invalid MTU, resend from offset") does NOT
+    // match this firmware's actual byte behavior. The offset value stayed
+    // exactly 2 across every single Pause observed, regardless of transfer
+    // progress or which command was being sent -- a genuine resend pointer
+    // would change as the transfer advances. Treating it as a seek target
+    // (an earlier version of this fix did exactly that) caused an infinite
+    // resend loop against a complaint that never resolves. Reverting to
+    // simply waiting past Pause responses -- the true meaning of this
+    // field on this specific firmware isn't confirmed, and guessing wrong
+    // again risks another regression like this one.
     let seek = 0;
     let sentPayloads = 0;
     const sendCount = Math.max(1, Math.floor(this.bufferSize / this.sendSize));
     while (seek < payload.length) {
       const chunk = payload.slice(seek, seek + this.sendSize);
-      let flowResp = null;
+      let contResp = null;
       if (sentPayloads + 1 >= sendCount) {
         const p = this.waitForResponse(4000, (resp) =>
-          (resp instanceof ContinueSendingResponse || resp instanceof PauseSendingResponse)
-          && resp.serialNo === serialNo);
+          resp instanceof ContinueSendingResponse && resp.serialNo === serialNo);
         await this._write(this.dataChar, chunk);
-        flowResp = await p;
+        contResp = await p;
       } else {
         await this._write(this.dataChar, chunk);
       }
       sentPayloads++;
       seek += this.sendSize;
-      if (flowResp instanceof ContinueSendingResponse) {
-        seek = flowResp.continueFrom;
-        sentPayloads = 0;
-      } else if (flowResp instanceof PauseSendingResponse) {
-        console.debug(`[spotled] device signaled a Pause (offset=${flowResp.offset}) -- resending from that offset instead of continuing forward blindly.`);
-        seek = flowResp.offset;
+      if (contResp) {
+        seek = contResp.continueFrom;
         sentPayloads = 0;
       }
       // Small pacing gap between chunk writes -- cheap, conservative
-      // insurance regardless of the Pause/offset handling above, since a
+      // insurance regardless of the Pause handling above, since a
       // mid-transfer device reboot was observed once during testing.
       if (seek < payload.length) await sleep(15);
     }
@@ -533,41 +540,15 @@ export class LedConnection {
     // hitting it with the Finish command.
     await sleep(15);
 
-    // Finish is where we actually observed the device sending Pause in
-    // real testing. If that happens, resend the data from the offset it
-    // gives us (same handling as the mid-transfer case above) and retry
-    // Finish, rather than treating the Pause as if it were the real
-    // completion signal.
-    const maxFinishAttempts = 5;
-    let finishResp = null;
-    for (let attempt = 0; attempt < maxFinishAttempts; attempt++) {
-      const finishPromise = this.waitForResponse(4000, (resp) =>
-        (resp instanceof SendingDataResponse || resp instanceof PauseSendingResponse)
-        && resp.serialNo === serialNo);
-      await this.sendCommand(new SendingDataFinishCommand(serialNo, dataCommand.commandType, payload.length));
-      const resp = await finishPromise;
-
-      if (resp instanceof SendingDataResponse) {
-        finishResp = resp;
-        break;
-      }
-
-      // Got a Pause instead: resend from the offset it specifies, then
-      // loop around to retry Finish.
-      console.debug(`[spotled] Finish got a Pause (offset=${resp.offset}) -- resending from that offset before retrying Finish.`);
-      let resendSeek = resp.offset;
-      while (resendSeek < payload.length) {
-        const chunk = payload.slice(resendSeek, resendSeek + this.sendSize);
-        await this._write(this.dataChar, chunk);
-        resendSeek += this.sendSize;
-        if (resendSeek < payload.length) await sleep(15);
-      }
-      await sleep(15);
-    }
-
-    if (!finishResp) {
-      throw new Error(`Device kept signaling Pause after ${maxFinishAttempts} resend attempts -- giving up rather than looping forever.`);
-    }
+    // This is the step where we consistently observed Pause responses in
+    // real testing -- but see the correction above: the offset field
+    // doesn't behave like a real resend pointer (it stayed constant
+    // across every observation), so we simply wait past it rather than
+    // acting on it, same as the mid-transfer case.
+    const finishPromise = this.waitForResponse(4000, (resp) =>
+      resp instanceof SendingDataResponse && resp.serialNo === serialNo);
+    await this.sendCommand(new SendingDataFinishCommand(serialNo, dataCommand.commandType, payload.length));
+    const finishResp = await finishPromise;
     if (finishResp.errorCode !== 0) {
       throw new Error(`Device reported an error finishing data send (error code ${finishResp.errorCode}).`);
     }
