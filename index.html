@@ -78,11 +78,22 @@
         <canvas id="drawCanvas" class="led-canvas"></canvas>
       </div>
       <div class="controls-row">
+        <button id="drawUndo" class="btn" disabled>&#8630; Undo</button>
+        <button id="drawRedo" class="btn" disabled>&#8631; Redo</button>
         <button id="drawClear" class="btn">Clear</button>
         <button id="drawInvert" class="btn">Invert</button>
         <button id="drawSend" class="btn btn-accent needs-connection" disabled>Send frame</button>
       </div>
-      <p class="hint">Click or drag on the grid to light pixels. Sends a single static frame.</p>
+      <div class="controls-row">
+        <span class="hint" style="margin:0 6px 0 0;">Shift:</span>
+        <button id="drawShiftLeft" class="btn">&larr;</button>
+        <button id="drawShiftRight" class="btn">&rarr;</button>
+        <button id="drawShiftUp" class="btn">&uarr;</button>
+        <button id="drawShiftDown" class="btn">&darr;</button>
+        <label class="btn" for="drawImportPng" style="cursor:pointer;">Import PNG&hellip;</label>
+        <input type="file" id="drawImportPng" accept="image/png,image/jpeg" style="display:none;">
+      </div>
+      <p class="hint">Click or drag on the grid to light pixels. Sends a single static frame. Shift wraps around the edges. PNG import is thresholded to on/off pixels, fit to the display size.</p>
     </div>
 
     <div id="panel-text" class="tab-panel">
@@ -131,6 +142,17 @@
         <button id="animDelete" class="btn">Delete</button>
         <button id="animClear" class="btn">Clear</button>
         <button id="animPlay" class="btn">Play preview</button>
+      </div>
+      <div class="controls-row">
+        <button id="animUndo" class="btn" disabled>&#8630; Undo</button>
+        <button id="animRedo" class="btn" disabled>&#8631; Redo</button>
+        <span class="hint" style="margin:0 6px 0 12px;">Shift:</span>
+        <button id="animShiftLeft" class="btn">&larr;</button>
+        <button id="animShiftRight" class="btn">&rarr;</button>
+        <button id="animShiftUp" class="btn">&uarr;</button>
+        <button id="animShiftDown" class="btn">&darr;</button>
+        <label class="btn" for="animImportPng" style="cursor:pointer;">Import PNG&hellip;</label>
+        <input type="file" id="animImportPng" accept="image/png,image/jpeg" style="display:none;">
       </div>
       <div class="controls-grid">
         <div class="field">
