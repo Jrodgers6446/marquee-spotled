@@ -291,6 +291,7 @@ export function parseCommandResponse(data) {
   const r = new GenericCommandResponse(data);
   switch (r.commandType) {
     case 2: return new SendingDataResponse(r.content);
+    case 4: return new SendingDataResponse(r.content); // this hardware's own "transfer complete" code -- same structure as type 2, confirmed against real device logs (identical serialNo/errorCode/commandType layout), just a different numeric type than the original spec assumed
     case 255: return new ContinueSendingResponse(r.content);
     case 254: return new PauseSendingResponse(r.content);
     case 19: return new DisplayInfoResponse(r.content);
@@ -304,7 +305,7 @@ export function parseCommandResponse(data) {
    LedConnection — manages the GATT session + flow control
    ============================================================ */
 
-const KNOWN_RESPONSE_TYPES = new Set([2, 17, 19, 21, 254, 255]);
+const KNOWN_RESPONSE_TYPES = new Set([2, 4, 17, 19, 21, 254, 255]);
 
 export class LedConnection {
   constructor() {
@@ -375,9 +376,25 @@ export class LedConnection {
         return;
       }
       if (this.pending) {
-        const { resolve } = this.pending;
-        this.pending = null;
-        resolve(value);
+        const parsed = parseCommandResponse(value);
+        if (!this.pending.predicate || this.pending.predicate(parsed)) {
+          const { resolve } = this.pending;
+          this.pending = null;
+          resolve(value);
+        } else {
+          // Confirmed against real hardware logs: this device can send a
+          // transient "Pause" (type 254) response right after a Finish
+          // command, before the actual completion signal arrives slightly
+          // later. Accepting the first recognized response unconditionally
+          // (the old behavior) grabbed that Pause as if it were the real
+          // finish acknowledgment, then stopped listening one message too
+          // early -- meaning the genuine completion response arrived after
+          // we'd already moved on, and got dropped as "unsolicited". Now we
+          // keep waiting until a response actually matches what the caller
+          // asked for.
+          console.debug('[spotled] response did not match what we\'re waiting for (got',
+            parsed.constructor ? parsed.constructor.name : parsed, ') -- still waiting');
+        }
       }
     });
 
@@ -435,13 +452,14 @@ export class LedConnection {
     await this._write(this.cmdChar, command.serialize());
   }
 
-  waitForResponse(timeoutMs = 4000) {
+  waitForResponse(timeoutMs = 4000, predicate = null) {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending = null;
         reject(new Error('Timeout waiting for device response.'));
       }, timeoutMs);
       this.pending = {
+        predicate,
         resolve: (value) => { clearTimeout(timer); resolve(parseCommandResponse(value)); },
       };
     });
@@ -459,12 +477,10 @@ export class LedConnection {
     const payload = dataCommand.serialize();
     console.debug(`[spotled] sendData: type=${dataCommand.commandType} serial=${serialNo} len=${payload.length}`);
 
-    let responsePromise = this.waitForResponse();
+    let responsePromise = this.waitForResponse(4000, (resp) =>
+      resp instanceof SendingDataResponse && resp.serialNo === serialNo);
     await this.sendCommand(new SendingDataStartCommand(serialNo, dataCommand.commandType, payload.length));
     const startResp = await responsePromise;
-    if (!(startResp instanceof SendingDataResponse) || startResp.serialNo !== serialNo) {
-      throw new Error('Unexpected response starting data send.');
-    }
     if (startResp.errorCode !== 0) {
       throw new Error(`Device rejected data send (error code ${startResp.errorCode}).`);
     }
@@ -476,7 +492,8 @@ export class LedConnection {
       const chunk = payload.slice(seek, seek + this.sendSize);
       let contResp = null;
       if (sentPayloads + 1 >= sendCount) {
-        const p = this.waitForResponse();
+        const p = this.waitForResponse(4000, (resp) =>
+          resp instanceof ContinueSendingResponse && resp.serialNo === serialNo);
         await this._write(this.dataChar, chunk);
         contResp = await p;
       } else {
@@ -485,17 +502,18 @@ export class LedConnection {
       sentPayloads++;
       seek += this.sendSize;
       if (contResp) {
-        if (!(contResp instanceof ContinueSendingResponse)) {
-          throw new Error('Device paused/reset the transfer (payload size mismatch with MTU).');
-        }
         seek = contResp.continueFrom;
         sentPayloads = 0;
       }
     }
 
-    const finishPromise = this.waitForResponse();
+    const finishPromise = this.waitForResponse(4000, (resp) =>
+      resp instanceof SendingDataResponse && resp.serialNo === serialNo);
     await this.sendCommand(new SendingDataFinishCommand(serialNo, dataCommand.commandType, payload.length));
-    await finishPromise;
+    const finishResp = await finishPromise;
+    if (finishResp.errorCode !== 0) {
+      throw new Error(`Device reported an error finishing data send (error code ${finishResp.errorCode}).`);
+    }
     console.debug(`[spotled] sendData complete: serial=${serialNo}`);
   }
 
