@@ -4,6 +4,8 @@
    ============================================================ */
 
 export const SERVICE_UUID = '0000ff20-0000-1000-8000-00805f9b34fb';
+
+function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 export const CMD_CHAR_UUID = '0000ff21-0000-1000-8000-00805f9b34fb';
 export const DATA_CHAR_UUID = '0000ff22-0000-1000-8000-00805f9b34fb';
 
@@ -505,7 +507,22 @@ export class LedConnection {
         seek = contResp.continueFrom;
         sentPayloads = 0;
       }
+      // Pace chunk writes with a small gap. The original reference
+      // implementation this protocol was ported from (python-spotled, over
+      // BlueZ/D-Bus) has enough inherent per-call overhead that it never
+      // actually fires chunks back-to-back with zero gap -- that accidental
+      // slowness gives cheap peripheral firmware breathing room to drain
+      // its receive buffer between writes. Web Bluetooth is fast enough to
+      // send chunks essentially instantly, which some firmware (this
+      // device's, apparently) can't keep up with -- observed to cause the
+      // device to reboot mid-transfer. This delay is a deliberate,
+      // conservative safety margin, not a spec requirement.
+      if (seek < payload.length) await sleep(15);
     }
+
+    // Same reasoning: give the device a moment after the last chunk before
+    // hitting it with the Finish command.
+    await sleep(15);
 
     const finishPromise = this.waitForResponse(4000, (resp) =>
       resp instanceof SendingDataResponse && resp.serialNo === serialNo);
