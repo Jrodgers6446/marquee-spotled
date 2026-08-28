@@ -185,7 +185,7 @@ function drawLedGrid(canvas, grid, { color = '#ffb000', bg = '#0b0d0f', editable
   }
 }
 
-function attachGridPainter(canvas, grid, onPaint, colorProvider) {
+function attachGridPainter(canvas, grid, onPaint, colorProvider, onStrokeEnd) {
   let painting = false;
   let paintValue = 1;
   const cellFromEvent = (ev) => {
@@ -205,9 +205,95 @@ function attachGridPainter(canvas, grid, onPaint, colorProvider) {
     onPaint();
   };
   canvas.addEventListener('pointerdown', (ev) => { painting = true; paint(ev, true); });
-  window.addEventListener('pointerup', () => { painting = false; });
+  window.addEventListener('pointerup', () => {
+    if (painting && onStrokeEnd) onStrokeEnd();
+    painting = false;
+  });
   canvas.addEventListener('pointermove', (ev) => { if (painting) paint(ev, false); });
   canvas.addEventListener('pointerleave', () => { painting = false; });
+}
+
+/* ---- shared undo/redo history + image import + frame-shift helpers ---- */
+/* Ported feature-for-feature from spotled-gui's editor (drawing tools with
+   undo/redo, PNG import, whole-frame shifting), rebuilt against Marquee's
+   own Web Bluetooth grid/frame model rather than spotled-gui's Python/Qt
+   code, which can't run in a browser. */
+
+class UndoStack {
+  constructor(maxSize = 50) { this.stack = []; this.index = -1; this.maxSize = maxSize; }
+  push(grid) {
+    this.stack = this.stack.slice(0, this.index + 1);
+    this.stack.push(cloneGrid(grid));
+    if (this.stack.length > this.maxSize) this.stack.shift();
+    this.index = this.stack.length - 1;
+  }
+  undo() {
+    if (this.index <= 0) return null;
+    this.index--;
+    return cloneGrid(this.stack[this.index]);
+  }
+  redo() {
+    if (this.index >= this.stack.length - 1) return null;
+    this.index++;
+    return cloneGrid(this.stack[this.index]);
+  }
+  canUndo() { return this.index > 0; }
+  canRedo() { return this.index < this.stack.length - 1; }
+  reset(grid) { this.stack = [cloneGrid(grid)]; this.index = 0; }
+}
+
+// Replaces a grid's contents in place (same object reference), so any
+// painter already bound to that grid stays valid without re-attaching.
+function setGridContents(grid, newGrid) {
+  for (let y = 0; y < grid.length; y++) {
+    grid[y] = newGrid[y].slice();
+  }
+}
+
+// Shifts a grid's contents by (dx, dy) cells, wrapping around the edges.
+function shiftGrid(grid, dx, dy) {
+  const h = grid.length, w = grid[0].length;
+  const shifted = makeGrid(w, h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const sx = ((x - dx) % w + w) % w;
+      const sy = ((y - dy) % h + h) % h;
+      shifted[y][x] = grid[sy][sx];
+    }
+  }
+  setGridContents(grid, shifted);
+}
+
+// Loads an image file, scales it to fit the grid's exact dimensions, and
+// thresholds it to on/off pixels (using the currently selected accent
+// color for "on" pixels on RGB devices) -- a browser-based equivalent of
+// spotled-gui's "PNG monochrome image importing" feature.
+function importImageToGrid(file, grid, isRgb, onColor, callback) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      const w = grid[0].length, h = grid.length;
+      const off = document.createElement('canvas');
+      off.width = w; off.height = h;
+      const ctx = off.getContext('2d');
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(img, 0, 0, w, h); // stretch-fit to exact device size
+      const data = ctx.getImageData(0, 0, w, h).data;
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const idx = (y * w + x) * 4;
+          const lum = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
+          const on = lum > 90;
+          grid[y][x] = on ? (isRgb ? onColor : 1) : 0;
+        }
+      }
+      callback();
+    };
+    img.src = reader.result;
+  };
+  reader.readAsDataURL(file);
 }
 
 /* ============================== app state ============================== */
@@ -339,25 +425,57 @@ $$('.tab-btn').forEach((btn) => {
 /* ============================== draw tab ============================== */
 
 let drawGrid = makeGrid(48, 12);
+const drawHistory = new UndoStack();
 
 function renderDraw() {
   drawLedGrid($('#drawCanvas'), drawGrid, { color: $('#accentColor').value, editable: true });
+  updateDrawUndoButtons();
+}
+
+function updateDrawUndoButtons() {
+  $('#drawUndo').disabled = !drawHistory.canUndo();
+  $('#drawRedo').disabled = !drawHistory.canRedo();
 }
 
 function setupDrawTab() {
   drawGrid = makeGrid(conn.width || 48, conn.height || 12);
+  drawHistory.reset(drawGrid);
   renderDraw();
   attachGridPainter($('#drawCanvas'), drawGrid, renderDraw, () =>
-    (conn.colorDepth === ColorDepth.RGB ? currentColor() : 1));
+    (conn.colorDepth === ColorDepth.RGB ? currentColor() : 1),
+    () => drawHistory.push(drawGrid));
 }
 
+$('#drawUndo').addEventListener('click', () => {
+  const prev = drawHistory.undo();
+  if (prev) { setGridContents(drawGrid, prev); renderDraw(); }
+});
+$('#drawRedo').addEventListener('click', () => {
+  const next = drawHistory.redo();
+  if (next) { setGridContents(drawGrid, next); renderDraw(); }
+});
 $('#drawClear').addEventListener('click', () => {
-  drawGrid = makeGrid(drawGrid[0].length, drawGrid.length);
+  setGridContents(drawGrid, makeGrid(drawGrid[0].length, drawGrid.length));
+  drawHistory.push(drawGrid);
   renderDraw();
 });
 $('#drawInvert').addEventListener('click', () => {
-  drawGrid = drawGrid.map((row) => row.map((v) => (v ? 0 : 1)));
+  setGridContents(drawGrid, drawGrid.map((row) => row.map((v) => (v ? 0 : 1))));
+  drawHistory.push(drawGrid);
   renderDraw();
+});
+$('#drawShiftLeft').addEventListener('click', () => { shiftGrid(drawGrid, -1, 0); drawHistory.push(drawGrid); renderDraw(); });
+$('#drawShiftRight').addEventListener('click', () => { shiftGrid(drawGrid, 1, 0); drawHistory.push(drawGrid); renderDraw(); });
+$('#drawShiftUp').addEventListener('click', () => { shiftGrid(drawGrid, 0, -1); drawHistory.push(drawGrid); renderDraw(); });
+$('#drawShiftDown').addEventListener('click', () => { shiftGrid(drawGrid, 0, 1); drawHistory.push(drawGrid); renderDraw(); });
+$('#drawImportPng').addEventListener('change', (ev) => {
+  const file = ev.target.files[0];
+  if (!file) return;
+  importImageToGrid(file, drawGrid, conn.colorDepth === ColorDepth.RGB, currentColor(), () => {
+    drawHistory.push(drawGrid);
+    renderDraw();
+  });
+  ev.target.value = ''; // allow re-importing the same file later
 });
 $('#drawSend').addEventListener('click', async () => {
   try {
@@ -414,10 +532,17 @@ let animFrames = [makeGrid(48, 12)];
 let animActiveIndex = 0;
 let animPlaying = false;
 let animPlayTimer = null;
+const animHistory = new UndoStack();
 
 function renderAnimEditor() {
   drawLedGrid($('#animCanvas'), animFrames[animActiveIndex], { color: $('#accentColor').value, editable: true });
   renderAnimFilmstrip();
+  updateAnimUndoButtons();
+}
+
+function updateAnimUndoButtons() {
+  $('#animUndo').disabled = !animHistory.canUndo();
+  $('#animRedo').disabled = !animHistory.canRedo();
 }
 
 function renderAnimFilmstrip() {
@@ -430,7 +555,12 @@ function renderAnimFilmstrip() {
     thumb.style.width = '48px'; thumb.style.height = '48px';
     strip.appendChild(thumb);
     drawLedGrid(thumb, frame, { color: $('#accentColor').value });
-    thumb.addEventListener('click', () => { animActiveIndex = i; renderAnimEditor(); });
+    thumb.addEventListener('click', () => {
+      animActiveIndex = i;
+      animHistory.reset(animFrames[animActiveIndex]);
+      rebindAnimPainter();
+      renderAnimEditor();
+    });
   });
 }
 
@@ -438,21 +568,25 @@ function setupAnimTab() {
   const w = conn.width || 48, h = conn.height || 12;
   animFrames = [makeGrid(w, h)];
   animActiveIndex = 0;
+  animHistory.reset(animFrames[animActiveIndex]);
   renderAnimEditor();
   attachGridPainter($('#animCanvas'), animFrames[animActiveIndex], renderAnimEditor, () =>
-    (conn.colorDepth === ColorDepth.RGB ? currentColor() : 1));
+    (conn.colorDepth === ColorDepth.RGB ? currentColor() : 1),
+    () => animHistory.push(animFrames[animActiveIndex]));
 }
 
 $('#animAdd').addEventListener('click', () => {
   const w = animFrames[0][0].length, h = animFrames[0].length;
   animFrames.splice(animActiveIndex + 1, 0, makeGrid(w, h));
   animActiveIndex += 1;
+  animHistory.reset(animFrames[animActiveIndex]);
   rebindAnimPainter();
   renderAnimEditor();
 });
 $('#animDuplicate').addEventListener('click', () => {
   animFrames.splice(animActiveIndex + 1, 0, cloneGrid(animFrames[animActiveIndex]));
   animActiveIndex += 1;
+  animHistory.reset(animFrames[animActiveIndex]);
   rebindAnimPainter();
   renderAnimEditor();
 });
@@ -460,13 +594,36 @@ $('#animDelete').addEventListener('click', () => {
   if (animFrames.length <= 1) return;
   animFrames.splice(animActiveIndex, 1);
   animActiveIndex = Math.max(0, animActiveIndex - 1);
+  animHistory.reset(animFrames[animActiveIndex]);
   rebindAnimPainter();
   renderAnimEditor();
 });
 $('#animClear').addEventListener('click', () => {
   const w = animFrames[0][0].length, h = animFrames[0].length;
-  animFrames[animActiveIndex] = makeGrid(w, h);
+  setGridContents(animFrames[animActiveIndex], makeGrid(w, h));
+  animHistory.push(animFrames[animActiveIndex]);
   renderAnimEditor();
+});
+$('#animUndo').addEventListener('click', () => {
+  const prev = animHistory.undo();
+  if (prev) { setGridContents(animFrames[animActiveIndex], prev); renderAnimEditor(); }
+});
+$('#animRedo').addEventListener('click', () => {
+  const next = animHistory.redo();
+  if (next) { setGridContents(animFrames[animActiveIndex], next); renderAnimEditor(); }
+});
+$('#animShiftLeft').addEventListener('click', () => { shiftGrid(animFrames[animActiveIndex], -1, 0); animHistory.push(animFrames[animActiveIndex]); renderAnimEditor(); });
+$('#animShiftRight').addEventListener('click', () => { shiftGrid(animFrames[animActiveIndex], 1, 0); animHistory.push(animFrames[animActiveIndex]); renderAnimEditor(); });
+$('#animShiftUp').addEventListener('click', () => { shiftGrid(animFrames[animActiveIndex], 0, -1); animHistory.push(animFrames[animActiveIndex]); renderAnimEditor(); });
+$('#animShiftDown').addEventListener('click', () => { shiftGrid(animFrames[animActiveIndex], 0, 1); animHistory.push(animFrames[animActiveIndex]); renderAnimEditor(); });
+$('#animImportPng').addEventListener('change', (ev) => {
+  const file = ev.target.files[0];
+  if (!file) return;
+  importImageToGrid(file, animFrames[animActiveIndex], conn.colorDepth === ColorDepth.RGB, currentColor(), () => {
+    animHistory.push(animFrames[animActiveIndex]);
+    renderAnimEditor();
+  });
+  ev.target.value = '';
 });
 
 function rebindAnimPainter() {
@@ -474,7 +631,8 @@ function rebindAnimPainter() {
   const clone = canvas.cloneNode(true);
   canvas.replaceWith(clone);
   attachGridPainter(clone, animFrames[animActiveIndex], renderAnimEditor, () =>
-    (conn.colorDepth === ColorDepth.RGB ? currentColor() : 1));
+    (conn.colorDepth === ColorDepth.RGB ? currentColor() : 1),
+    () => animHistory.push(animFrames[animActiveIndex]));
 }
 
 $('#animPlay').addEventListener('click', () => {
